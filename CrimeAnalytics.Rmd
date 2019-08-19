@@ -1,0 +1,261 @@
+---
+title: "Crime Analytics"
+output: html_notebook
+---
+
+```{r, results=FALSE}
+library(readr)
+library(magrittr)
+library(dplyr)
+library(lubridate)
+library(dygraphs)
+library(latticeExtra)
+library(ggplot2)
+library(gganimate)
+library(tidyr)
+library(stringr)
+
+#Working with 4 datasets: Weather data for all 3 cities, and individual city crime data
+weather = read_csv("~/Downloads/OIDD 245/DP2/weather.csv")
+SFCrimes2 = read_csv("~/Downloads/OIDD 245/DP2/SFCrimes.csv")
+NYCrimes2 = read_csv("~/Downloads/OIDD 245/DP2/NYCrimes.csv")
+ChicagoCrimes2 = read_csv("~/Downloads/OIDD 245/DP2/ChicagoCrimes.csv")
+```
+
+```{r}
+#Work with 2014-2015 data
+SFCrimes = SFCrimes2[1:306654,]
+NYCrimes = NYCrimes2[1:969481,]
+ChicagoCrimes = ChicagoCrimes2[1:539393,]
+```
+
+```{r}
+#Convert all strings in date columns into date format
+weather$Date = mdy(weather$Date)
+SFCrimes$Date = mdy(SFCrimes$Date)
+NYCrimes$Date = mdy(NYCrimes$Date)
+ChicagoCrimes$Date = mdy(ChicagoCrimes$Date)
+
+#Replace NA's with 0's
+SFCrimes[is.na(SFCrimes)] = 0
+NYCrimes[is.na(NYCrimes)] = 0
+ChicagoCrimes[is.na(ChicagoCrimes)] = 0
+```
+
+###**Time Series of Number of Crimes in 3 Cities across 2014 & 2015**
+
+```{r}
+#Grouping by date and counting number of crimes
+SF_groupedByDate = group_by(SFCrimes, Date)
+SF_counts = as.data.frame(count(SF_groupedByDate, Date))
+SF_counts$temp = head(weather$`SF-Temp`, 730)
+SF_counts$wType = head(weather$`SF-Weather`, 730)
+
+NY_groupedByDate = group_by(NYCrimes, Date)
+NY_counts = count(NY_groupedByDate, Date)
+NY_counts$temp = head(weather$`NewYork-Temp`, 730)
+NY_counts$wType = head(weather$`NewYork-Weather`, 730)
+
+Chicago_groupedByDate = group_by(ChicagoCrimes, Date)
+Chicago_counts = count(Chicago_groupedByDate, Date)
+Chicago_counts$temp = head(weather$`Chicago-Temp`, 730)
+Chicago_counts$wType = head(weather$`Chicago-Weather`, 730)
+
+crimes = as.data.frame(cbind(as.Date(SF_counts$Date, format='%Y-%m-%d'), SF_counts$n, NY_counts$n, Chicago_counts$n))
+names(crimes) = c("Date", "SF", "NY", "Chicago")
+crimes$Date = (as.numeric(as.Date(SF_counts$Date)) - 16070)
+
+#Time series graph
+c_graph = dygraph(crimes, main = "Number of Crimes in 3 Cities (2014-2015)") %>%
+  dySeries("NY", label = "NY") %>%
+  dySeries("Chicago", label = "Chicago") %>%
+  dySeries("SF", label = "SF") %>%
+  dyOptions(stackedGraph = FALSE) %>%
+  dyRangeSelector(height = 20) %>%
+  dyAxis("x", label = "Date") %>%
+  dyAxis("y", label = "Number of Crimes") %>%
+  dyEvent(c_graph, 365, label = "2015", labelLoc = "top",
+    color = "black", strokePattern = "dashed")
+c_graph
+```
+
+### **Number of Crimes in Each City based on Temperature**
+
+#### San Francisco
+The number of crimes increases in the colder months (around October to April) and dips during the summer months.
+```{r}
+#Plot 2 variables on one graph
+#Smooth type best represents trend
+SF_obj1 <- xyplot(n ~ as.Date(Date), SF_counts, main = "SF Crimes vs Temperature (2014-2015)", xlab = "Date", ylab = "Number of Crimes", type = c("smooth"), lwd=2, scales=list(x=list(rot=50,tick.number=17,cex=1)))
+SF_obj2 <- xyplot(temp ~ as.Date(Date), SF_counts, ylab = "Temperature (F)", type = "smooth", lwd=2)
+
+doubleYScale(SF_obj1, SF_obj2, text = c("Number Of Crimes", "Temperature"), add.ylab2 = TRUE)
+```
+
+#### New York
+Contrary to SF, the number of crimes decreases in the colder months (around October to February) and increases during the summer months.
+```{r}
+#Plot 2 variables on one graph
+#s type best represents trend
+NY_obj1 <- xyplot(n ~ as.Date(Date), NY_counts, main = "NY Crimes vs Temperature (2014-2015)", xlab = "Date", ylab = "Number of Crimes", type = c("s"), lwd=2, scales=list(x=list(rot=50, tick.number=17, cex=1)))
+NY_obj2 <- xyplot(temp ~ as.Date(Date), NY_counts, ylab = "Temperature (F)", type = "smooth", lwd=2)
+
+doubleYScale(NY_obj1, NY_obj2, text = c("Number Of Crimes", "Temperature"), add.ylab2 = TRUE)
+```
+
+#### Chicago
+Chicago is very similar to New York in that the number of crimes decreases in the colder months (around October to February) and increases during the summer months.
+```{r}
+#Plot 2 variables on one graph
+#s type best represents trend
+Chicago_obj1 <- xyplot(n ~ as.Date(Date), Chicago_counts, main = "Chicago Crimes vs Temperature", xlab = "Date", ylab = "Number of Crimes", type = c("s"), lwd=2, scales=list(x=list(rot=50, tick.number=17, cex=1)))
+Chicago_obj2 <- xyplot(temp ~ as.Date(Date), Chicago_counts, ylab = "Temperature (F)", type = "smooth", lwd=2)
+
+doubleYScale(Chicago_obj1, Chicago_obj2, text = c("Number Of Crimes", "Temperature"), add.ylab2 = TRUE)
+```
+
+### **Crime by Hour and Day Analysis**
+
+####San Francisco 
+
+```{r}
+#Separate out month, day, and hour
+SFCrimes$Month = month(SFCrimes$Date)
+SFCrimes$day = day(SFCrimes$Date)
+SFCrimes$hour = str_sub(SFCrimes$Time, 1, 2)
+
+#Getting crime counts
+SFto_plot = SFCrimes %>% group_by(Day, hour) %>% count()
+SFto_plot$Day = ordered(SFto_plot$Day, levels=c("Monday", "Tuesday", "Wednesday", "Thursday", 
+"Friday", "Saturday", "Sunday"))
+names(SFto_plot)[2:3] = c("Hour","Number of Crimes")
+
+#Plot number of crimes in each hour of each day
+SFplot = ggplot(SFto_plot, aes(x = Hour, y = Day, fill = `Number of Crimes`)) +
+  geom_tile() +
+  labs(title = "Number of Crimes Committed in SF by Hour") +
+  scale_fill_gradient(low = "white", high = "#FF0000")
+SFplot
+```
+
+```{r}
+#Only graph these crime categories (most common, relevant, etc)
+SFto_plot2 = subset(SFCrimes, SFCrimes$Category %in% c("ARSON", "ASSAULT", "BURGLARY", 
+                                                     "DRUG/NARCOTIC", "DRUNKENNESS",
+                                                     "LARCENY/THEFT", "PROSTITUTION",
+                                                     "ROBBERY", "SEX OFFENSES, FORCIBLE",
+                                                     "VEHICLE THEFT", "DRIVING UNDER THE INFLUENCE"))
+
+#Allow category to be properly displayed
+SFto_plot2$Category = gsub("DRIVING UNDER THE INFLUENCE", "DUI", SFto_plot2$Category)
+
+#Getting crime counts
+SFto_plot2 = SFto_plot2 %>% group_by(Day, hour, Category) %>% count()
+names(SFto_plot2)[4] = c("Number of Crimes")
+SFto_plot2$Day = ordered(SFto_plot2$Day, levels=c("Monday", "Tuesday", "Wednesday", "Thursday", 
+"Friday", "Saturday", "Sunday"))
+
+#Normalize each number to be proportional to the total number of crimes in the category
+SFto_plot2 = SFto_plot2 %>% group_by(Category) %>% mutate(Normalized = `Number of Crimes`/sum(`Number of Crimes`))
+
+#Plot number of crimes by day and hour, but split by category
+SFcrimesPlot = ggplot(SFto_plot2, aes(x = hour, y = Day, fill = Normalized)) +
+              geom_tile() +
+              labs(x = "Hour", y = "Day of the Week", title = "Number of Crimes Committed in San Francisco by Day of the Week and Hour") +
+              theme(axis.text.x = element_text(angle = 90, vjust = 0.6, size = 5)) +
+              scale_fill_gradient(low = "white", high = "#FF0000") +
+              facet_wrap(~ Category, nrow = 4)
+SFcrimesPlot
+```
+
+##Chicago Crimes by Hour and Day Analysis
+
+```{r}
+ChicagoCrimes$hour = str_sub(ChicagoCrimes$Time, 1, 2)
+
+Chicagoto_plot = ChicagoCrimes %>% group_by(Day, hour) %>% count()
+Chicagoto_plot$Day = ordered(Chicagoto_plot$Day, levels=c("Monday", "Tuesday", "Wednesday", "Thursday", 
+"Friday", "Saturday", "Sunday"))
+names(Chicagoto_plot)[2:3] = c("Hour","Number of Crimes")
+Chicagoplot = ggplot(Chicagoto_plot, aes(x = Hour, y = Day, fill = `Number of Crimes`)) +
+  geom_tile() +
+  labs(title = "Number of Crimes Committed in Chicago by Hour") +
+  scale_fill_gradient(low = "white", high = "#800080")
+Chicagoplot
+```
+
+```{r}
+Chicagoto_plot2 = subset(ChicagoCrimes, ChicagoCrimes$Category %in% c("ARSON", "ASSAULT", "BATTERY", 
+                                                     "BATTERY", "CRIMINAL DAMAGE", "HOMICIDE",
+                                                     "CRIM SEXUAL ASSAULT", "NARCOTICS", "PROSTITUTION",
+                                                     "ROBBERY", "SEX OFFENSE", "THEFT"))
+Chicagoto_plot2 = Chicagoto_plot2 %>% group_by(Day, hour, Category) %>% count()
+names(Chicagoto_plot2)[4] = c("Number of Crimes")
+Chicagoto_plot2$Day = ordered(Chicagoto_plot2$Day, levels=c("Monday", "Tuesday", "Wednesday", "Thursday", 
+"Friday", "Saturday", "Sunday"))
+
+#Normalize the number to be proportional to the total number of crimes in the category
+Chicagoto_plot2 = Chicagoto_plot2 %>% group_by(Category) %>% mutate(Normalized = `Number of Crimes`/sum(`Number of Crimes`))
+
+ChicagocrimesPlot = ggplot(Chicagoto_plot2, aes(x = hour, y = Day, fill = Normalized)) +
+              geom_tile() +
+              labs(x = "Hour", y = "Day of the Week", title = "Number of Crimes Committed in Chicago by Day of the Week and Hour") +
+              theme(axis.text.x = element_text(angle = 90, vjust = 0.6, size = 5)) +
+              scale_fill_gradient(low = "white", high = "#800080") +
+              facet_wrap(~ Category, nrow = 4)
+ChicagocrimesPlot
+```
+
+##New York Crimes by Hour and Day Analysis
+
+```{r}
+NYCrimes$hour = str_sub(NYCrimes$Time, 1, 2)
+
+NYto_plot = NYCrimes %>% group_by(Day, hour) %>% count()
+NYto_plot$Day = ordered(NYto_plot$Day, levels=c("Monday", "Tuesday", "Wednesday", "Thursday", 
+"Friday", "Saturday", "Sunday"))
+names(NYto_plot)[2:3] = c("Hour","Number of Crimes")
+NYplot = ggplot(NYto_plot, aes(x = Hour, y = Day, fill = `Number of Crimes`)) +
+  geom_tile() +
+  labs(title = "Number of Crimes Committed in New York by Hour") +
+  scale_fill_gradient(low = "white", high = "#0000FF")
+NYplot
+```
+
+```{r}
+# clean New York categories
+NYCrimes$Category = gsub("ARSON 1|ARSON 2,3,4|ARSON, MOTOR VEHICLE 1 2 3 & 4", "ARSON", NYCrimes$Category)
+NYCrimes$Category = gsub("ASSAULT 2,1,UNCLASSIFIED|ASSAULT 3|ASSAULT POLICE/PEACE OFFICER", "ASSAULT", NYCrimes$Category)
+NYCrimes$Category = gsub("BURGLARS TOOLS,UNCLASSIFIED|BURGLARY,COMMERCIAL,DAY|BURGLARY,COMMERCIAL,NIGHT|BURGLARY,COMMERCIAL,UNKNOWN TI|BURGLARY,RESIDENCE,DAY|BURGLARY,RESIDENCE,NIGHT|BURGLARY,RESIDENCE,UNKNOWN TIM|BURGLARY,TRUCK DAY|BURGLARY,TRUCK NIGHT|BURGLARY,UNCLASSIFIED,DAY|BURGLARY,UNCLASSIFIED,NIGHT|BURGLARY,UNCLASSIFIED,UNKNOWN", "BURGLARY", NYCrimes$Category)
+NYCrimes$Category = gsub("CONTROLLED SUBSTANCE, INTENT T|CONTROLLED SUBSTANCE, POSSESSI|CONTROLLED SUBSTANCE, SALE 4|CONTROLLED SUBSTANCE, SALE 5|CONTROLLED SUBSTANCE,INTENT TO|CONTROLLED SUBSTANCE,POSSESS.|CONTROLLED SUBSTANCE,POSSESS.|CONTROLLED SUBSTANCE,SALE 1|CONTROLLED SUBSTANCE,SALE 2|CONTROLLED SUBSTANCE,SALE 3|NARCOTICS-", "NARCOTICS", NYCrimes$Category)
+NYCrimes$Category = gsub("INTOXICATED DRIVING,ALCOHOL", "DUI", NYCrimes$Category)
+NYCrimes$Category = gsub("LARCENY, GRAND OF AUTO - ATTEM|LARCENY, GRAND OF MOPED|LARCENY,GRAND BY ACQUIRING LOS|LARCENY,GRAND BY ACQUIRING LOST CREDIT CARD|LARCENY,GRAND BY BANK ACCT COMPROMISE-ATM TRANSACTION|LARCENY,GRAND BY BANK ACCT COMPROMISE-TELLER|LARCENY,GRAND BY BANK ACCT COMPROMISE-REPRODUCED CHECK|LARCENY,GRAND BY CREDIT CARD ACCT COMPROMISE-EXISTING ACCT|LARCENY,GRAND BY CREDIT CARD ACCT COMPROMISE-EXISTING ACCT|LARCENY,GRAND BY BANK ACCT COMPROMISE-UNCLASSIFIED|LARCENY,GRAND BY DISHONEST EMP|LARCENY,GRAND BY EXTORTION|LARCENY,GRAND BY FALSE PROMISE-IN PERSON CONTACT|LARCENY,GRAND BY FALSE PROMISE-IN PERSON CONTACT|LARCENY,GRAND BY IDENTITY THEFT-UNCLASSIFIED|LARCENY,GRAND BY OPEN BANK ACCT|LARCENY,GRAND BY OPEN CREDIT CARD (NEW ACCT)|LARCENY,GRAND BY OPEN/COMPROMISE CELL PHONE ACCT|LARCENY,GRAND BY THEFT OF CREDIT CARD|LARCENY,GRAND FROM BOAT, UNATTENDED|LARCENY,GRAND FROM EATERY, UNATTENDED|LARCENY,GRAND FROM BUILDING (NON-RESIDENCE) UNATTENDED|LARCENY,GRAND FROM NIGHT CLUB, UNATTENDED|LARCENY,GRAND FROM PERSON, BAG OPEN/DIP|LARCENY,GRAND FROM PERSON,LUSH WORKER(SLEEPING/UNCON VICTIM)|LARCENY,GRAND FROM PERSON,PERSONAL ELECTRONIC DEVICE(SNATCH)|LARCENY,GRAND FROM PERSON,PICK|LARCENY,GRAND FROM PERSON,PURS|LARCENY,GRAND FROM PERSON,UNCL|LARCENY,GRAND FROM PIER, UNATTENDED|LARCENY,GRAND FROM RESIDENCE, UNATTENDED|LARCENY,GRAND FROM STORE-SHOPL|LARCENY,GRAND FROM TRUCK, UNATTENDED|LARCENY,GRAND FROM VEHICLE/MOTORCYCLE|LARCENY,GRAND OF AUTO|LARCENY,GRAND FROM RETAIL STORE, UNATTENDED|LARCENY,GRAND OF BICYCLE|LARCENY,GRAND OF BOAT|LARCENY,GRAND OF MOTORCYCLE|LARCENY,GRAND OF TRUCK|LARCENY,GRAND PERSON,NECK CHAI|LARCENY,PETIT BY ACQUIRING LOS|LARCENY,PETIT BY CHECK USE|LARCENY,PETIT BY CREDIT CARD U|LARCENY,PETIT BY DISHONEST EMP|LARCENY,GRAND OF VEHICULAR/MOTORCYCLE ACCESSORIES|LARCENY,PETIT BY FALSE PROMISE|LARCENY,PETIT FROM AUTO|LARCENY,PETIT FROM BOAT|LARCENY,PETIT FROM BUILDING,UN|LARCENY,PETIT FROM COIN MACHIN|LARCENY,PETIT FROM OPEN AREAS,|LARCENY,PETIT FROM PARKING MET|LARCENY,PETIT FROM PIER|LARCENY,PETIT FROM STORE-SHOPL|LARCENY,PETIT FROM TRUCK|LARCENY,PETIT OF AUTO|LARCENY,PETIT OF BICYCLE|LARCENY,PETIT OF BOAT|LARCENY,PETIT OF LICENSE PLATE|LARCENY,PETIT OF MOTORCYCLE|LARCENY,PETIT OF TRUCK|LARCENY,PETIT OF VEHICLE ACCES|LARCENY, PETIT OF AUTO - ATTEM|LARCENY, PETIT OF MOPED|LARCENY,GRAND BY BANK ACCT COMPROMISE-REPRODUCED CHECK|LARCENY,GRAND FROM BUILDING (NON-RESIDENCE) UNATTENDED|LARCENY,GRAND FROM OPEN AREAS, UNATTENDED|THEFT,RELATED OFFENSES,UNCLASS", "THEFT", NYCrimes$Category)
+NYCrimes$Category = gsub("PROSTITUTION|PROSTITUTION 2, COMPULSORY|PROSTITUTION 2, UNDER 16|PROSTITUTION 3, PROMOTING UNDE|PROSTITUTION 3,PROMOTING BUSIN|PROSTITUTION 4,PROMOTING&SECUR|PROSTITUTION, PATRONIZING 4, 3|PROSTITUTION,PERMITTING", "PROSTITUTION", NYCrimes$Category)
+NYCrimes$Category = gsub("RAPE 1|RAPE 1,ATTEMPT|RAPE 2|RAPE 3", "RAPE", NYCrimes$Category)
+NYCrimes$Category = gsub("ROBBERY, CHAIN STORE|ROBBERY, PAYROLL|ROBBERY,ATM LOCATION|ROBBERY,BANK|ROBBERY,BAR/RESTAURANT|ROBBERY,BEGIN AS SHOPLIFTING|ROBBERY,BICYCLE|ROBBERY,BODEGA/CONVENIENCE STORE|ROBBERY,CAR JACKING|ROBBERY,CHECK CASHING BUSINESS|ROBBERY,CLOTHING|ROBBERY,COMMERCIAL UNCLASSIFIED|ROBBERY,DELIVERY PERSON|ROBBERY,DOCTOR/DENTIST OFFICE|ROBBERY,DWELLING|ROBBERY,GAS STATION|ROBBERY,HIJACKING|ROBBERY,HOME INVASION|ROBBERY,LICENSED FOR HIRE VEHICLE|ROBBERY,LICENSED MEDALLION CAB|ROBBERY,LIQUOR STORE|ROBBERY,NECKCHAIN/JEWELRY|ROBBERY,OF TRUCK DRIVER|ROBBERY,ON BUS/ OR BUS DRIVER|ROBBERY,OPEN AREA UNCLASSIFIED|ROBBERY,PERSONAL ELECTRONIC DEVICE|ROBBERY,PHARMACY|ROBBERY,POCKETBOOK/CARRIED BAG|ROBBERY,PUBLIC PLACE INSIDE|ROBBERY,RESIDENTIAL COMMON AREA|ROBBERY,UNLICENSED FOR HIRE VEHICLE", "ROBBERY", NYCrimes$Category)
+
+#used this NYCrimes data frame for Tableau map
+#write.csv(x = NYCrimes, file = "~/Desktop/NewYorkTableau.csv", row.names = F) 
+
+NYto_plot2 = subset(NYCrimes, NYCrimes$Category %in% c("ARSON", "ASSAULT", "BURGLARY", 
+                                                     "DUI", "NARCOTICS", 
+                                                     "RAPE", "ROBBERY", "THEFT"))
+NYto_plot2 = NYto_plot2 %>% group_by(Day, hour, Category) %>% count()
+names(NYto_plot2)[4] = c("Number of Crimes")
+NYto_plot2$Day = ordered(NYto_plot2$Day, levels=c("Monday", "Tuesday", "Wednesday", "Thursday", 
+"Friday", "Saturday", "Sunday"))
+
+#Normalize the number to be proportional to the total number of crimes in the category
+NYto_plot2 = NYto_plot2 %>% group_by(Category) %>% mutate(Normalized = `Number of Crimes`/sum(`Number of Crimes`))
+
+NYcrimesPlot = ggplot(NYto_plot2, aes(x = hour, y = Day, fill = Normalized)) +
+              geom_tile() +
+              labs(x = "Hour", y = "Day of the Week", title = "Number of Crimes Committed in New York by Day of the Week and Hour") +
+              theme(axis.text.x = element_text(angle = 90, vjust = 0.6, size = 5)) +
+              scale_fill_gradient(low = "#E6E6FA", high = "#0000FF") +
+              facet_wrap(~ Category, nrow = 4)
+NYcrimesPlot
+```
+
+
+
